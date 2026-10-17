@@ -46,7 +46,7 @@ make serve        # build + run the HTTP server (MODEL=minicpm5-2b default)
   and defaults must preserve Jev semantics.
 - **Tested-models only.** `MODELS` in models.rs is a curated set; a new GGUF
   gets a row only after `snap evaluate` on `eval/*.jsonl` proves it.
-- **`llama-cpp-sys-2` is pinned (`=0.1.157`)** — deliberate, don't float it.
+- **`llama-cpp-sys-2` is pinned (`=0.1.160`)** — deliberate, don't float it.
 - **`hf-hub` stays `ureq`-only.** native-tls/openssl can't build on musl;
   the static release target depends on this.
 - **Portability matters.** Release matrix: macOS arm64, Linux gnu
