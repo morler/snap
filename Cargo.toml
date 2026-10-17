@@ -1,13 +1,13 @@
 [package]
 name = "snap"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 description = "SNAP: typed decisions from a single forward pass (single-pass neural answer probabilities)"
 license = "MIT"
 build = "build.rs"
 
 [dependencies]
-llama-cpp-sys-2 = "=0.1.157"
+llama-cpp-sys-2 = "=0.1.160"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
