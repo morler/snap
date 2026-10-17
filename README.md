@@ -125,7 +125,7 @@ them, and the defaults preserve Jev semantics:
 | question `"type": "numeric"` | `{min, max, granularity}` or `{min, max, step}`: a distribution over a numeric range |
 | question `allow_abstain` | default `false`; `true` adds an `__abstain__` slot (status `abstained`) |
 | request `mode` | `shared` (default: shared text decoded once, spans cached across requests) or `direct` (every question decoded alone, the reference path) |
-| request `layout` | `auto` (default), `state_first`, `question_first`, `header`, `catalog` |
+| request `layout` | `auto`, `state_first`, `question_first`, `header`, `catalog`; when omitted, inherits `snap serve --layout` (default `auto`) |
 | request `expand` | `probes` (default) or `pages`: how a choice with more than 26 options expands |
 
 `state` takes a string or any JSON value. Objects and arrays reach the
@@ -157,6 +157,20 @@ compact lines it replaces.
   abstention), and whenever the state is bigger than the heads.
 
 The resolved layout is reported in `x_snap`.
+
+For a server-wide default, use the same snake_case names as JSON:
+
+```bash
+snap serve --model models/StartLux-Decision-v1.1-2B-Instant-Q8_0.gguf --layout state_first
+```
+
+This is a request default, not a model-loading option. Requests to
+`POST /v1/systemone` that omit `layout` inherit it; an explicit request
+value always wins, including `"layout": "auto"`, which uses the normal
+per-request heuristic rather than the server's chosen layout. `null` is
+invalid, not omission. Without `serve --layout`, the default remains
+`auto`. Model swaps keep the service default; one-shot `snap -p` and
+in-process evaluation and benchmarks keep their existing defaults.
 
 Answers carry extras on top of the Jev shape, which Jev clients simply
 ignore: `status`, `confidence`, `coverage`, `level`, and typed fields

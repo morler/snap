@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use crate::schema::{default_layout, default_mode, DecideRequest, Expand, Layout, Mode};
+use crate::schema::{default_mode, DecideRequest, Expand, Layout, Mode};
 
 /// Jev wire format, tolerant of extra SDK keys. Optional snap extensions:
 /// per-question `allow_abstain` (default false, same as every other entry
@@ -20,14 +20,20 @@ pub struct SystemoneRequest {
     pub temperature: f64,
     #[serde(default = "default_mode")]
     pub mode: Mode,
-    #[serde(default = "default_layout")]
-    pub layout: Layout,
+    #[serde(default, deserialize_with = "specified_layout")]
+    pub layout: Option<Layout>,
     #[serde(default)]
     pub expand: Expand,
 }
 
 fn one() -> f64 {
     1.0
+}
+
+// Missing inherits the server policy; explicit values (including auto) override it.
+// Deserialize Layout itself so null remains invalid, unlike a plain Option.
+fn specified_layout<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Layout>, D::Error> {
+    Layout::deserialize(d).map(Some)
 }
 
 /// Whether `k` is a level description (a legend value) — those get re-keyed
@@ -37,14 +43,14 @@ fn leg_contains(legend: &Map<String, Value>, k: &str) -> bool {
 }
 
 impl SystemoneRequest {
-    pub fn to_native(&self) -> DecideRequest {
+    pub fn to_native(&self, default_layout: Layout) -> DecideRequest {
         DecideRequest {
             model: self.model.clone(),
             state: self.state.clone(),
             questions: self.questions.clone(),
             temperature: self.temperature,
             mode: self.mode,
-            layout: self.layout,
+            layout: self.layout.unwrap_or(default_layout),
             expand: self.expand,
         }
     }
@@ -147,7 +153,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let qs = r.to_native().questions().unwrap();
+        let qs = r.to_native(Layout::Auto).questions().unwrap();
         assert!(!qs[0].1.allow_abstain); // Jev default
         assert!(qs[1].1.allow_abstain); // explicit opt-in survives
     }
@@ -159,13 +165,78 @@ mod tests {
             "questions": {"q": {"type": "noul"}}
         }))
         .unwrap();
-        assert_eq!(r.to_native().mode, Mode::Shared);
+        assert_eq!(r.to_native(Layout::Auto).mode, Mode::Shared);
         let r: SystemoneRequest = serde_json::from_value(json!({
             "state": "s", "mode": "direct",
             "questions": {"q": {"type": "noul"}}
         }))
         .unwrap();
-        assert_eq!(r.to_native().mode, Mode::Direct);
+        assert_eq!(r.to_native(Layout::Auto).mode, Mode::Direct);
+    }
+
+    #[test]
+    fn omitted_layout_inherits_the_callers_default() {
+        let r: SystemoneRequest = serde_json::from_value(json!({
+            "state": "s", "questions": {"q": {"type": "noul"}}
+        }))
+        .unwrap();
+        assert_eq!(r.layout, None);
+        for layout in [
+            Layout::Auto,
+            Layout::StateFirst,
+            Layout::QuestionFirst,
+            Layout::Header,
+            Layout::Catalog,
+        ] {
+            assert_eq!(r.to_native(layout).layout, layout);
+        }
+        let native = r.to_native(Layout::Auto);
+        assert_eq!(native.mode, Mode::Shared);
+        assert_eq!(native.temperature, 1.0);
+        assert_eq!(native.expand, Expand::Probes);
+        assert!(!native.questions().unwrap()[0].1.allow_abstain);
+    }
+
+    #[test]
+    fn explicit_layout_overrides_every_default_including_auto() {
+        for (name, layout) in [
+            ("auto", Layout::Auto),
+            ("state_first", Layout::StateFirst),
+            ("question_first", Layout::QuestionFirst),
+            ("header", Layout::Header),
+            ("catalog", Layout::Catalog),
+        ] {
+            let r: SystemoneRequest = serde_json::from_value(json!({
+                "state": "s", "layout": name, "questions": {"q": {"type": "noul"}}
+            }))
+            .unwrap();
+            assert_eq!(r.layout, Some(layout));
+            for default in [
+                Layout::Auto,
+                Layout::StateFirst,
+                Layout::QuestionFirst,
+                Layout::Header,
+                Layout::Catalog,
+            ] {
+                assert_eq!(r.to_native(default).layout, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_layout_is_not_treated_as_omitted() {
+        for layout in [
+            json!(null),
+            json!("sideways"),
+            json!("state-first"),
+            json!(0),
+            json!({}),
+        ] {
+            assert!(serde_json::from_value::<SystemoneRequest>(json!({
+                "state": "s", "layout": layout, "questions": {"q": {"type": "noul"}}
+            }))
+            .is_err());
+        }
     }
 
     #[test]

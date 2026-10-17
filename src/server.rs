@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 
 use crate::api::{from_native, SystemoneRequest};
 use crate::engine::Engine;
+use crate::schema::Layout;
 
 /// What the resident engine is, readable without waiting on the engine.
 struct Active {
@@ -33,6 +34,7 @@ struct AppState {
     switch: Mutex<()>,
     n_ctx: i32,
     n_threads: i32,
+    default_layout: Layout,
     started: Instant,
 }
 
@@ -146,7 +148,7 @@ async fn systemone(
     State(s): State<Arc<AppState>>,
     Json(req): Json<SystemoneRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let native = req.to_native();
+    let native = req.to_native(s.default_layout);
     let out = tokio::task::spawn_blocking(move || s.engine().decide(&native))
         .await
         .map_err(|e| err422(anyhow::anyhow!(e)))?
@@ -236,14 +238,25 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-pub async fn serve(
-    engine: Engine,
-    model: &str,
-    n_ctx: i32,
-    n_threads: i32,
-    host: &str,
-    port: u16,
-) -> Result<()> {
+/// Server policy stays outside the engine, including across model swaps.
+pub struct Config<'a> {
+    pub model: &'a str,
+    pub n_ctx: i32,
+    pub n_threads: i32,
+    pub host: &'a str,
+    pub port: u16,
+    pub layout: Layout,
+}
+
+pub async fn serve(engine: Engine, config: Config<'_>) -> Result<()> {
+    let Config {
+        model,
+        n_ctx,
+        n_threads,
+        host,
+        port,
+        layout,
+    } = config;
     let state = Arc::new(AppState {
         active: Mutex::new(Active {
             name: model.to_string(),
@@ -253,6 +266,7 @@ pub async fn serve(
         switch: Mutex::new(()),
         n_ctx,
         n_threads,
+        default_layout: layout,
         started: Instant::now(),
     });
     let app = Router::new()

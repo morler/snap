@@ -225,9 +225,13 @@ components:
         layout:
           type: string
           enum: [auto, state_first, question_first, header, catalog]
-          default: auto
           description: |
             Prompt layout — where the question sits relative to the state.
+            When omitted, inherits the service default from `snap serve --layout`
+            (auto unless configured otherwise). CLI values use the same snake_case
+            spelling as JSON. An explicit value always overrides the service default,
+            including `auto`, which invokes the per-request heuristic. `null` is
+            invalid. The service default persists across model swaps.
             `question_first` puts QUESTION+OPTIONS before STATE: heads stay
             cached across requests (LRU over KV sequences), so repeat
             workloads decode only the state. `state_first` amortizes

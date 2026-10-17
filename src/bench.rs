@@ -177,7 +177,7 @@ pub fn run_local(engine: &mut Engine, requests: usize) -> Result<Vec<Value>> {
     scenarios(
         &mut |body| {
             let req: SystemoneRequest = serde_json::from_value(body.clone())?;
-            let out = from_native(&engine.decide(&req.to_native())?);
+            let out = from_native(&engine.decide(&req.to_native(crate::schema::Layout::Auto))?);
             let ms = out["x_snap"]["total_ms"].as_f64().unwrap_or(0.0);
             Ok((out, ms))
         },

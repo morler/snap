@@ -95,6 +95,10 @@ enum Cmd {
         host: String,
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
+        /// Default layout for requests that omit layout; explicit request values override it
+        /// (auto|state_first|question_first|header|catalog, same as JSON).
+        #[arg(long, default_value = "auto", value_parser = parse_layout)]
+        layout: schema::Layout,
     },
     /// find the code that answers a question: BM25 recall and a model-judged tree descent, then the model reads each candidate once
     Grep(grep::cli::GrepArgs),
@@ -232,7 +236,7 @@ fn read_request(spec: Option<&str>) -> Result<String> {
 
 fn decide_request(m: &ModelArgs, req: api::SystemoneRequest) -> Result<()> {
     let mut eng = m.engine()?;
-    let out = api::from_native(&eng.decide(&req.to_native())?);
+    let out = api::from_native(&eng.decide(&req.to_native(schema::Layout::Auto))?);
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
 }
@@ -247,7 +251,7 @@ fn parse_state_format(s: &str) -> std::result::Result<engine::StateFormat, Strin
 }
 
 /// `snap serve` body — model load + warmup + blocking axum loop.
-fn serve(m: &ModelArgs, host: &str, port: u16) -> Result<()> {
+fn serve(m: &ModelArgs, host: &str, port: u16, layout: schema::Layout) -> Result<()> {
     let mut eng = m.engine()?;
     // warm the backend pipelines before the port opens — the first
     // real request shouldn't pay shader-compile + buffer setup
@@ -257,7 +261,17 @@ fn serve(m: &ModelArgs, host: &str, port: u16) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(server::serve(eng, &m.model, m.ctx, m.threads, host, port))
+    rt.block_on(server::serve(
+        eng,
+        server::Config {
+            model: &m.model,
+            n_ctx: m.ctx,
+            n_threads: m.threads,
+            host,
+            port,
+            layout,
+        },
+    ))
 }
 
 fn print_ps(live: &[instances::Instance]) {
@@ -589,7 +603,12 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Grep(a) => a.run()?,
-        Cmd::Serve { m, host, port } => {
+        Cmd::Serve {
+            m,
+            host,
+            port,
+            layout,
+        } => {
             init_logs(m.debug);
             if let Some(i) = instances::on_port(*port) {
                 let who = if i.info.pid == 0 {
@@ -604,7 +623,7 @@ fn main() -> Result<()> {
             }
             // registered before the slow load so `snap ps` shows "starting"
             instances::register(host, *port, &m.model)?;
-            let r = serve(m, host, *port);
+            let r = serve(m, host, *port, *layout);
             instances::unregister(std::process::id());
             r?;
         }
@@ -619,5 +638,53 @@ mod tests {
     #[test]
     fn the_cli_definition_is_sound() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn serve_layout_defaults_auto() {
+        let cli = Cli::try_parse_from(["snap", "serve"]).unwrap();
+        assert!(matches!(
+            cli.cmd,
+            Some(Cmd::Serve {
+                layout: schema::Layout::Auto,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn serve_layout_uses_the_json_names() {
+        for (name, expected) in [
+            ("auto", schema::Layout::Auto),
+            ("state_first", schema::Layout::StateFirst),
+            ("question_first", schema::Layout::QuestionFirst),
+            ("header", schema::Layout::Header),
+            ("catalog", schema::Layout::Catalog),
+        ] {
+            let cli = Cli::try_parse_from(["snap", "serve", "--layout", name]).unwrap();
+            let Some(Cmd::Serve { layout, .. }) = cli.cmd else {
+                panic!("expected serve")
+            };
+            assert_eq!(layout, expected);
+        }
+        for name in ["state-first", "question-first", "sideways"] {
+            assert!(Cli::try_parse_from(["snap", "serve", "--layout", name]).is_err());
+        }
+    }
+
+    #[test]
+    fn serve_layout_is_documented_and_not_a_model_arg() {
+        let err = Cli::try_parse_from(["snap", "serve", "--help"])
+            .err()
+            .unwrap();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        let help = err.to_string();
+        assert!(help.contains("--layout"));
+        assert!(help.contains("[default: auto]"));
+        for name in ["state_first", "question_first", "header", "catalog"] {
+            assert!(help.contains(name));
+        }
+        assert!(Cli::try_parse_from(["snap", "--layout", "state_first", "serve"]).is_err());
+        assert!(Cli::try_parse_from(["snap", "bench", "--layout", "state_first"]).is_err());
     }
 }
